@@ -606,3 +606,206 @@
   border-color: rgba(255, 255, 255, 0.3);
 }
 
+/* Center Mobile Controls */
+.mobileCenterControls {
+  display: none;
+}
+
+@media (max-width: 768px) {
+  .mobileCenterControls {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    display: flex;
+    align-items: center;
+    gap: 2.2rem;
+    z-index: 25;
+    pointer-events: none;
+    opacity: 0;
+    transition: opacity 0.4s cubic-bezier(0.16, 1, 0.3, 1);
+  }
+
+  .mobileCenterControlsVisible {
+    opacity: 1;
+    pointer-events: auto;
+  }
+
+  .mobileCenterButton {
+    background: rgba(0, 0, 0, 0.6);
+    border: 1px solid rgba(255, 255, 255, 0.18);
+    color: white;
+    width: 48px;
+    height: 48px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    transition: transform 0.2s ease, background 0.2s ease;
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
+    pointer-events: auto;
+  }
+
+  .mobileCenterPlayButton {
+    background: var(--accent-color);
+    color: white;
+    width: 64px;
+    height: 64px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    box-shadow: 0 0 20px var(--accent-glow);
+    transition: transform 0.2s ease, background 0.2s ease;
+    pointer-events: auto;
+  }
+  
+  .mobileCenterPlayButton svg {
+    margin-left: 2px; /* optical center */
+  }
+
+  .mobileCenterButton:active, .mobileCenterPlayButton:active {
+    transform: scale(0.9);
+  }
+
+  /* Hide duplicates and volume slider on mobile */
+  .leftControls > button:nth-child(1),
+  .leftControls > button:nth-child(2),
+  .leftControls > button:nth-child(3),
+  .volumeContainer {
+    display: none !important;
+  }
+
+  /* Make sure bottom controls and headers are compact on mobile */
+  .playerHeader {
+    padding: 1rem 1.25rem 2rem 1.25rem;
+    gap: 1rem;
+  }
+
+  .backArrow {
+    width: 38px;
+    height: 38px;
+  }
+
+  .backArrow svg {
+    width: 22px;
+    height: 22px;
+  }
+
+  .playerHeader h2 {
+    font-size: 1rem;
+  }
+
+  .headerEpisode {
+    font-size: 0.8rem;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 100%;
+    display: block;
+  }
+
+  .bottomControlsGroup {
+    padding: 2.2rem 1.25rem 1rem 1.25rem;
+    gap: 0.5rem;
+  }
+
+  .timeline {
+    height: 5px;
+  }
+
+  .timelineContainer:hover .timeline {
+    height: 7px;
+  }
+
+  .controlBar {
+    gap: 0.5rem;
+  }
+
+  .leftControls, .rightControls {
+    gap: 0.75rem;
+  }
+
+  .iconButton {
+    width: 40px;
+    height: 40px;
+  }
+
+  .iconButton svg {
+    width: 24px;
+    height: 24px;
+  }
+
+  .timeDisplay {
+    font-size: 0.75rem;
+  }
+
+  /* Settings Menu as Mobile Bottom Drawer */
+  .settingsMenu {
+    position: fixed;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    width: 100vw;
+    border-radius: 20px 20px 0 0;
+    background: rgba(15, 15, 15, 0.95);
+    border: none;
+    border-top: 1px solid rgba(255, 255, 255, 0.12);
+    padding: 1.5rem 0 2rem 0;
+    box-shadow: 0 -10px 40px rgba(0, 0, 0, 0.9);
+    animation: slideUpMobile 0.3s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+  }
+
+  @keyframes slideUpMobile {
+    from { transform: translateY(100%); }
+    to { transform: translateY(0); }
+  }
+
+  .menuHeader {
+    font-size: 0.9rem;
+    padding: 0.5rem 1.5rem 1rem;
+    text-align: center;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  }
+
+  .menuHeaderBack {
+    font-size: 0.9rem;
+    padding: 0.5rem 1.5rem 1rem;
+    text-align: center;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  }
+
+  .menuItem {
+    padding: 0.85rem 1.5rem;
+    font-size: 1rem;
+  }
+
+  .menuItem:active {
+    background: rgba(255, 255, 255, 0.08);
+  }
+
+  /* Play Next Countdown Toast adjustments */
+  .nextToastContainer {
+    bottom: 5.5rem;
+    right: 1rem;
+    left: 1rem;
+    width: auto;
+    padding: 1rem;
+    gap: 0.6rem;
+  }
+
+  .toastCountdownNum {
+    width: 44px;
+    height: 44px;
+    font-size: 1.5rem;
+  }
+
+  .toastEpisodeTitle {
+    font-size: 0.9rem;
+  }
+}
+
+

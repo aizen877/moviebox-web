@@ -33,6 +33,7 @@ export default function MovieCard({ movie, priority = false }: MovieCardProps) {
 
   // Reset navigating state if the path changes (navigation completed) or user goes back
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setIsNavigating(false);
   }, [pathname]);
 
