@@ -395,7 +395,8 @@ export default function CustomVideoPlayer({
           }}
           onPlaying={() => setIsLoading(false)}
           onEnded={handleVideoEnded}
-          referrerPolicy="no-referrer"
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          {...({ referrerPolicy: "no-referrer" } as any)}
           autoPlay
         />
       ) : (
