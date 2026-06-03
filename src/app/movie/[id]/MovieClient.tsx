@@ -22,32 +22,90 @@ interface MovieClientProps {
 }
 
 export default function MovieClient({ id }: MovieClientProps) {
+  const [activeId, setActiveId] = useState(id);
+
+  // Sync prop changes
+  useEffect(() => {
+    setActiveId(id);
+  }, [id]);
+
   // Synchronously read any warmed cache so a prefetched page renders instantly (no skeleton)
-  const cachedCore = getCachedCore(id);
-  const cachedTmdb = getCachedTmdb(id);
-  const cachedRecs = getCachedRecs(id);
+  const cachedCore = getCachedCore(activeId);
+  const cachedTmdb = getCachedTmdb(activeId);
+  const cachedRecs = getCachedRecs(activeId);
 
   const [movie, setMovie] = useState<any>(cachedCore?.movie ?? null);
   const [cast, setCast] = useState<any[]>(cachedCore?.cast ?? []);
+  const [dubs, setDubs] = useState<any[]>(cachedCore?.dubs ?? []);
   const [recommendations, setRecommendations] = useState<any[]>(cachedRecs ?? []);
   const [tmdbBackdropUrl, setTmdbBackdropUrl] = useState<string | null>(cachedTmdb?.backdropUrl ?? null);
   const [tmdbLogoUrl, setTmdbLogoUrl] = useState<string | null>(cachedTmdb?.logoUrl ?? null);
   const [loading, setLoading] = useState(!cachedCore);
   const [recsLoading, setRecsLoading] = useState(!cachedRecs);
   const [inList, setInList] = useState(false);
+  const [continueRecord, setContinueRecord] = useState<{ progress?: number; duration?: number } | null>(null);
+
+  // Query localStorage to check if there is an active continue watching record for this movie
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem("mbx:continue_watching");
+      if (saved) {
+        const history = JSON.parse(saved);
+        
+        // Collect all IDs associated with this movie across all dubs
+        const allIds = new Set<string>();
+        if (activeId) allIds.add(String(activeId));
+        if (movie?.subjectId) allIds.add(String(movie.subjectId));
+        if (movie?.detailPath) allIds.add(String(movie.detailPath));
+        if (dubs) {
+          dubs.forEach((d: any) => {
+            if (d.subject_id) allIds.add(String(d.subject_id));
+            if (d.detail_path) allIds.add(String(d.detail_path));
+          });
+        }
+
+        const getBaseTitle = (t: string) => {
+          if (!t) return "";
+          return t.replace(/\[[^\]]+\]/g, "").replace(/\([^\)]+\)/g, "").trim().toLowerCase();
+        };
+        const currentBaseTitle = getBaseTitle(movie?.title || "");
+
+        const record = history.find((item: any) => {
+          if (allIds.has(String(item.id))) return true;
+          if (currentBaseTitle && item.title && item.mediaType === "movie") {
+            return getBaseTitle(item.title) === currentBaseTitle;
+          }
+          return false;
+        });
+
+        if (record && typeof record.progress === "number" && typeof record.duration === "number") {
+          setContinueRecord({
+            progress: record.progress,
+            duration: record.duration
+          });
+        } else {
+          setContinueRecord(null);
+        }
+      } else {
+        setContinueRecord(null);
+      }
+    } catch (e) {
+      console.error("Failed to load continue watching record in details page", e);
+    }
+  }, [activeId, movie, dubs]);
 
   // Reflect the saved state once we know the movie
   useEffect(() => {
     if (movie) {
-      setInList(isInMyList({ _id: id, id }));
+      setInList(isInMyList({ _id: activeId, id: activeId }));
     }
-  }, [movie, id]);
+  }, [movie, activeId]);
 
   const handleToggleList = () => {
     if (!movie) return;
     const nowIn = toggleMyList({
-      _id: id,
-      id,
+      _id: activeId,
+      id: activeId,
       title: movie.title,
       poster_path: movie.cover?.url,
       vote_average: movie.imdbRatingValue ? parseFloat(movie.imdbRatingValue) : 0,
@@ -60,20 +118,23 @@ export default function MovieClient({ id }: MovieClientProps) {
   useEffect(() => {
     let active = true;
 
-    // Re-read cache on id change (e.g. client-side navigation between movies)
-    const core = getCachedCore(id);
-    const tmdb = getCachedTmdb(id);
-    const recs = getCachedRecs(id);
+    // Re-read cache on activeId change (e.g. client-side navigation between movies)
+    const core = getCachedCore(activeId);
+    const tmdb = getCachedTmdb(activeId);
+    const recs = getCachedRecs(activeId);
 
     if (core) {
       setMovie(core.movie);
       setCast(core.cast);
+      setDubs(core.dubs || []);
       setLoading(false);
     } else {
-      setLoading(true);
+      setLoading(false); // don't show full page skeleton if we have current movie loaded or are swapping
     }
-    setTmdbBackdropUrl(tmdb?.backdropUrl ?? null);
-    setTmdbLogoUrl(tmdb?.logoUrl ?? null);
+    if (tmdb) {
+      setTmdbBackdropUrl(tmdb.backdropUrl ?? null);
+      setTmdbLogoUrl(tmdb.logoUrl ?? null);
+    }
     if (recs) {
       setRecommendations(recs);
       setRecsLoading(false);
@@ -82,16 +143,17 @@ export default function MovieClient({ id }: MovieClientProps) {
     }
 
     // 1. CRITICAL PATH: MovieBox details only. Render as soon as this resolves.
-    fetchCore(id)
+    fetchCore(activeId)
       .then((data) => {
         if (!active) return;
         setMovie(data.movie);
         setCast(data.cast);
+        setDubs(data.dubs || []);
         setLoading(false);
 
         // 2. NON-BLOCKING: TMDB backdrop/logo enrichment swaps in when ready.
         if (data.movie?.title) {
-          fetchTmdb(id, "movie", data.movie.title)
+          fetchTmdb(activeId, "movie", data.movie.title)
             .then((enr) => {
               if (!active) return;
               if (enr.backdropUrl) setTmdbBackdropUrl(enr.backdropUrl);
@@ -106,7 +168,7 @@ export default function MovieClient({ id }: MovieClientProps) {
       });
 
     // 3. NON-CRITICAL: recommendations (lazy section at the bottom)
-    fetchRecs(id)
+    fetchRecs(activeId)
       .then((mapped) => {
         if (!active) return;
         setRecommendations(mapped);
@@ -120,7 +182,7 @@ export default function MovieClient({ id }: MovieClientProps) {
     return () => {
       active = false;
     };
-  }, [id]);
+  }, [activeId]);
 
   // Loading / Skeleton State (100% matched to page layout to prevent layout shift)
   if (loading) {
@@ -268,15 +330,52 @@ export default function MovieClient({ id }: MovieClientProps) {
             
             <p className={styles.description}>{movie.description}</p>
             
-            <div className={styles.actionButtons}>
+            {dubs && dubs.length > 1 && (
+              <div className={styles.dubsContainer}>
+                <span className={styles.dubsLabel}>Audio / Dubbing:</span>
+                <div className={styles.dubsList}>
+                  {dubs.map((d: any) => {
+                    const isCurrent = 
+                      String(d.subject_id) === String(activeId) || 
+                      String(d.detail_path) === String(activeId) ||
+                      String(d.subject_id) === String(movie?.subjectId) ||
+                      String(d.detail_path) === String(movie?.detailPath);
+                    return (
+                      <button
+                        key={d.subject_id}
+                        onClick={() => {
+                          window.history.pushState(null, "", `/movie/${d.subject_id}`);
+                          setActiveId(d.subject_id);
+                        }}
+                        className={`${styles.dubBadge} ${isCurrent ? styles.dubActive : ""}`}
+                      >
+                        {d.language_name}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+            
+            <div className={styles.actionButtons} style={{ position: "relative" }}>
+              {continueRecord && continueRecord.progress && continueRecord.duration ? (
+                <div style={{ position: "absolute", top: "-28px", left: "0", right: "120px", display: "flex", alignItems: "center", gap: "12px" }}>
+                  <div style={{ flex: 1, height: "3px", backgroundColor: "rgba(255,255,255,0.2)", borderRadius: "2px", overflow: "hidden" }}>
+                    <div style={{ width: `${(continueRecord.progress / continueRecord.duration) * 100}%`, height: "100%", backgroundColor: "var(--accent-color)" }} />
+                  </div>
+                  <span style={{ fontSize: "0.85rem", fontWeight: "bold", whiteSpace: "nowrap" }}>
+                    {Math.floor(continueRecord.progress / 60)} of {Math.floor(continueRecord.duration / 60)}m
+                  </span>
+                </div>
+              ) : null}
               <Link
-                href={`/watch/${id}`}
+                href={`/watch/${activeId}`}
                 className={styles.playButton}
-                onMouseEnter={() => prefetchDownload(id, 0, 0)}
-                onTouchStart={() => prefetchDownload(id, 0, 0)}
+                onMouseEnter={() => prefetchDownload(activeId, 0, 0)}
+                onTouchStart={() => prefetchDownload(activeId, 0, 0)}
               >
                 <Play fill="black" size={24} />
-                <span>Play</span>
+                <span>{continueRecord && continueRecord.progress ? "Resume" : "Play"}</span>
               </Link>
               <button
                 className={styles.iconButton}

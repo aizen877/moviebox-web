@@ -29,9 +29,10 @@ export default function WatchClient({ id, initialSeason, initialEpisode }: Watch
 
   const [movie, setMovie] = useState<any>(cachedCore?.movie ?? null);
   const [seasonsData, setSeasonsData] = useState<any>(cachedCore?.seasons ?? null);
+  const [dubs, setDubs] = useState<any[]>(cachedCore?.dubs ?? []);
   const [detailsLoading, setDetailsLoading] = useState(!cachedCore);
 
-  const isSeries = seasonsData?.is_series || false;
+  const isSeries = movie?.subjectType === 2 || seasonsData?.is_series || (seasonsData?.seasons && seasonsData.seasons.some((s: any) => s.season > 0)) || false;
   const apiSeason = isSeries ? initialSeason : 0;
   const apiEpisode = isSeries ? initialEpisode : 0;
 
@@ -62,6 +63,7 @@ export default function WatchClient({ id, initialSeason, initialEpisode }: Watch
     if (core) {
       setMovie(core.movie);
       setSeasonsData(core.seasons);
+      setDubs(core.dubs || []);
       setDetailsLoading(false);
     } else {
       setDetailsLoading(true);
@@ -70,6 +72,7 @@ export default function WatchClient({ id, initialSeason, initialEpisode }: Watch
           if (!active) return;
           setMovie(data.movie);
           setSeasonsData(data.seasons);
+          setDubs(data.dubs || []);
         })
         .catch((err) => console.error("Failed to load details", err))
         .finally(() => {
@@ -179,6 +182,26 @@ export default function WatchClient({ id, initialSeason, initialEpisode }: Watch
     }
   }, [nextEp, currentSeason, currentSeasonEpisodes, nextSeasonEpisodes]);
 
+  const enrichedEpisodes = useMemo(() => {
+    if (!isSeries || !seasonsData?.seasons) return [];
+    const currentSeasonData = seasonsData.seasons.find((s: any) => s.season === currentSeason);
+    if (!currentSeasonData) return [];
+    
+    const count = currentSeasonData.episode_count || 0;
+    const list = [];
+    for (let i = 1; i <= count; i++) {
+      const tmdbEp = currentSeasonEpisodes.find((e: any) => e.episode_number === i);
+      list.push({
+        episode_number: i,
+        name: tmdbEp?.name || `Episode ${i}`,
+        overview: tmdbEp?.overview || "",
+        still_path: tmdbEp?.still_path || null,
+        runtime: tmdbEp?.runtime || null,
+      });
+    }
+    return list;
+  }, [isSeries, seasonsData, currentSeason, currentSeasonEpisodes]);
+
   const handleEpisodeChange = (season: number, episode: number) => {
     setCurrentSeason(season);
     setCurrentEpisode(episode);
@@ -208,6 +231,15 @@ export default function WatchClient({ id, initialSeason, initialEpisode }: Watch
           behind the intro. */}
       {movie && !loadingFiles && files && files.length > 0 && (
         <CustomVideoPlayer
+          id={id}
+          mediaType={isSeries ? "tv" : "movie"}
+          season={isSeries ? currentSeason : undefined}
+          episode={isSeries ? currentEpisode : undefined}
+          posterPath={movie?.cover?.url}
+          episodes={enrichedEpisodes}
+          currentSeason={currentSeason}
+          currentEpisode={currentEpisode}
+          onEpisodeChange={handleEpisodeChange}
           files={files}
           selectedFile={selectedFile}
           onQualityChange={setSelectedFile}
@@ -218,6 +250,7 @@ export default function WatchClient({ id, initialSeason, initialEpisode }: Watch
           fillParent
           backHref={backHref}
           onReady={() => setVideoReady(true)}
+          dubs={dubs}
         />
       )}
 

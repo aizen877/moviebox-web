@@ -19,6 +19,11 @@ interface Movie {
   release_date?: string;
   first_air_date?: string;
   media_type?: string;
+  progress?: number;
+  duration?: number;
+  episodeTitle?: string;
+  season?: number;
+  episode?: number;
 }
 
 interface MovieCardProps {
@@ -53,7 +58,18 @@ export default function MovieCard({ movie, priority = false }: MovieCardProps) {
   // Use a fallback ID format if _id is not present
   const id = movie._id || movie.id;
   const type = movie.media_type || "movie";
-  const linkHref = `/${type === "tv" ? "tv" : "movie"}/${id}`;
+  
+  // If it's a continue-watching item (has progress), send the user straight to the player!
+  const isContinueWatching = typeof movie.progress === "number" && typeof movie.duration === "number";
+  
+  let linkHref = `/${type === "tv" ? "tv" : "movie"}/${id}`;
+  if (isContinueWatching) {
+    if (type === "tv" && movie.season && movie.episode) {
+      linkHref = `/watch/${id}?season=${movie.season}&episode=${movie.episode}`;
+    } else {
+      linkHref = `/watch/${id}`;
+    }
+  }
 
   // Warm the detail-page cache on hover/touch so navigation skips the skeleton
   const handlePrefetch = () => {
@@ -99,12 +115,24 @@ export default function MovieCard({ movie, priority = false }: MovieCardProps) {
               )}
             </div>
           </div>
+          {movie.progress && movie.duration && (
+            <div className={styles.progressBarContainer}>
+              <div 
+                className={styles.progressBar} 
+                style={{ width: `${(movie.progress / movie.duration) * 100}%` }}
+              />
+            </div>
+          )}
         </div>
       </div>
       <div className={styles.bottomInfo}>
         <h3 className={styles.bottomTitle}>{title}</h3>
         <div className={styles.bottomMeta}>
-          {year && <span className={styles.year}>{year}</span>}
+          {movie.episodeTitle ? (
+            <span className={styles.episodeLabel}>{movie.episodeTitle}</span>
+          ) : (
+            year && <span className={styles.year}>{year}</span>
+          )}
           {rating && (
             <span className={styles.rating}>
               ★ {rating}

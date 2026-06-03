@@ -1,5 +1,6 @@
 
 import Carousel from "@/components/Carousel";
+import ContinueWatching from "@/components/ContinueWatching";
 import { getHomepage } from "@/services/api";
 import styles from "./page.module.css";
 import Link from "next/link";
@@ -66,6 +67,7 @@ export default async function Home() {
       )}
 
       <div className={`container ${styles.contentWrapper}`}>
+        <ContinueWatching />
         {carouselBlocks.map((block: any, idx: number) => {
           const mappedMovies = block.subjects.map((s: any) => ({
             id: s.subjectId,

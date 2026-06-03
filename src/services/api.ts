@@ -1,4 +1,6 @@
-const BASE_URL = "https://movie-api.opsihab.tech";
+const BASE_URL = process.env.NODE_ENV === "development"
+  ? "http://127.0.0.1:7860"
+  : "https://movie-api.opsihab.tech";
 
 export async function getHomepage() {
   const res = await fetch(`${BASE_URL}/homepage`, { next: { revalidate: 300 } });

@@ -22,13 +22,21 @@ interface TVClientProps {
 }
 
 export default function TVClient({ id }: TVClientProps) {
+  const [activeId, setActiveId] = useState(id);
+
+  // Sync prop changes
+  useEffect(() => {
+    setActiveId(id);
+  }, [id]);
+
   // Read any warmed cache synchronously so prefetched/cached pages skip the skeleton
-  const cachedCore = getCachedCore(id);
-  const cachedTmdb = getCachedTmdb(id);
-  const cachedRecs = getCachedRecs(id);
+  const cachedCore = getCachedCore(activeId);
+  const cachedTmdb = getCachedTmdb(activeId);
+  const cachedRecs = getCachedRecs(activeId);
 
   const [movie, setMovie] = useState<any>(cachedCore?.movie ?? null);
   const [cast, setCast] = useState<any[]>(cachedCore?.cast ?? []);
+  const [dubs, setDubs] = useState<any[]>(cachedCore?.dubs ?? []);
   const [seasonsData, setSeasonsData] = useState<any>(cachedCore?.seasons ?? null);
   const [tmdbBackdropUrl, setTmdbBackdropUrl] = useState<string | null>(cachedTmdb?.backdropUrl ?? null);
   const [tmdbShowMeta, setTmdbShowMeta] = useState<any>(cachedTmdb?.meta ?? null);
@@ -44,19 +52,118 @@ export default function TVClient({ id }: TVClientProps) {
   const [loading, setLoading] = useState(!cachedCore);
   const [recsLoading, setRecsLoading] = useState(!cachedRecs);
   const [inList, setInList] = useState(false);
+  const [continueRecord, setContinueRecord] = useState<{ season: number; episode: number; progress?: number; duration?: number; } | null>(null);
+  const [episodesProgress, setEpisodesProgress] = useState<Record<string, { progress: number; duration: number }>>({});
 
   // Reflect the saved state once we know the show
   useEffect(() => {
     if (movie) {
-      setInList(isInMyList({ _id: id, id }));
+      setInList(isInMyList({ _id: activeId, id: activeId }));
     }
-  }, [movie, id]);
+  }, [movie, activeId]);
+
+  // Query localStorage to check if there is an active continue watching record for this series
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem("mbx:continue_watching");
+      if (saved) {
+        const history = JSON.parse(saved);
+        
+        // Collect all IDs associated with this series across all dubs
+        const allIds = new Set<string>();
+        if (activeId) allIds.add(String(activeId));
+        if (movie?.subjectId) allIds.add(String(movie.subjectId));
+        if (movie?.detailPath) allIds.add(String(movie.detailPath));
+        if (dubs) {
+          dubs.forEach((d: any) => {
+            if (d.subject_id) allIds.add(String(d.subject_id));
+            if (d.detail_path) allIds.add(String(d.detail_path));
+          });
+        }
+
+        const getBaseTitle = (t: string) => {
+          if (!t) return "";
+          return t.replace(/\[[^\]]+\]/g, "").replace(/\([^\)]+\)/g, "").trim().toLowerCase();
+        };
+        const currentBaseTitle = getBaseTitle(movie?.title || seasonsData?.title || "");
+
+        const record = history.find((item: any) => {
+          if (allIds.has(String(item.id))) return true;
+          if (currentBaseTitle && item.title && item.mediaType === "tv") {
+            return getBaseTitle(item.title) === currentBaseTitle;
+          }
+          return false;
+        });
+
+        if (record && record.season && record.episode) {
+          setContinueRecord({ 
+            season: record.season, 
+            episode: record.episode,
+            progress: record.progress,
+            duration: record.duration
+          });
+          setSelectedSeason(record.season);
+        } else {
+          setContinueRecord(null);
+        }
+      } else {
+        setContinueRecord(null);
+      }
+    } catch (e) {
+      console.error("Failed to load continue watching record in details page", e);
+    }
+  }, [activeId, movie, dubs, seasonsData]);
+
+  // Load and hold playback progress for all episodes of this show
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem("mbx:episodes_progress");
+      if (saved) {
+        const history = JSON.parse(saved);
+        
+        // Collect all IDs associated with this series across all dubs
+        const allIds = new Set<string>();
+        if (activeId) allIds.add(String(activeId));
+        if (movie?.subjectId) allIds.add(String(movie.subjectId));
+        if (movie?.detailPath) allIds.add(String(movie.detailPath));
+        if (dubs) {
+          dubs.forEach((d: any) => {
+            if (d.subject_id) allIds.add(String(d.subject_id));
+            if (d.detail_path) allIds.add(String(d.detail_path));
+          });
+        }
+
+        const getBaseTitle = (t: string) => {
+          if (!t) return "";
+          return t.replace(/\[[^\]]+\]/g, "").replace(/\([^\)]+\)/g, "").trim().toLowerCase();
+        };
+        const currentBaseTitle = getBaseTitle(movie?.title || seasonsData?.title || "");
+
+        const map: Record<string, { progress: number; duration: number }> = {};
+        history.forEach((item: any) => {
+          const isMatch = 
+            allIds.has(String(item.id)) || 
+            (currentBaseTitle && item.title && getBaseTitle(item.title) === currentBaseTitle);
+
+          if (isMatch) {
+            const key = `${item.season}:${item.episode}`;
+            map[key] = { progress: item.progress, duration: item.duration };
+          }
+        });
+        setEpisodesProgress(map);
+      } else {
+        setEpisodesProgress({});
+      }
+    } catch (e) {
+      console.error("Failed to load episodes progress in details page", e);
+    }
+  }, [activeId, movie, dubs, seasonsData]);
 
   const handleToggleList = () => {
     if (!movie) return;
     const nowIn = toggleMyList({
-      _id: id,
-      id,
+      _id: activeId,
+      id: activeId,
       title: movie.title,
       poster_path: movie.cover?.url,
       vote_average: movie.imdbRatingValue ? parseFloat(movie.imdbRatingValue) : 0,
@@ -70,24 +177,27 @@ export default function TVClient({ id }: TVClientProps) {
   useEffect(() => {
     let active = true;
 
-    // Re-sync from cache on id change
-    const core = getCachedCore(id);
-    const tmdb = getCachedTmdb(id);
-    const recs = getCachedRecs(id);
+    // Re-sync from cache on activeId change
+    const core = getCachedCore(activeId);
+    const tmdb = getCachedTmdb(activeId);
+    const recs = getCachedRecs(activeId);
 
     if (core) {
       setMovie(core.movie);
       setCast(core.cast);
+      setDubs(core.dubs || []);
       setSeasonsData(core.seasons);
       if (core.seasons?.seasons?.[0]?.season) {
         setSelectedSeason(core.seasons.seasons[0].season);
       }
       setLoading(false);
     } else {
-      setLoading(true);
+      setLoading(false); // don't show full page skeleton during client-side dub swap
     }
-    setTmdbBackdropUrl(tmdb?.backdropUrl ?? null);
-    setTmdbShowMeta(tmdb?.meta ?? null);
+    if (tmdb) {
+      setTmdbBackdropUrl(tmdb.backdropUrl ?? null);
+      setTmdbShowMeta(tmdb.meta ?? null);
+    }
     if (recs) {
       setRecommendations(recs);
       setRecsLoading(false);
@@ -96,11 +206,12 @@ export default function TVClient({ id }: TVClientProps) {
     }
 
     // CRITICAL PATH: MovieBox details only — render the instant these resolve.
-    fetchCore(id)
+    fetchCore(activeId)
       .then((data) => {
         if (!active) return;
         setMovie(data.movie);
         setCast(data.cast);
+        setDubs(data.dubs || []);
         setSeasonsData(data.seasons);
         if (data.seasons?.seasons?.[0]?.season) {
           setSelectedSeason(data.seasons.seasons[0].season);
@@ -109,7 +220,7 @@ export default function TVClient({ id }: TVClientProps) {
 
         // NON-BLOCKING: TMDB backdrop/logo/meta swaps in (and feeds episode enrichment) when ready.
         if (data.movie?.title) {
-          fetchTmdb(id, "tv", data.movie.title)
+          fetchTmdb(activeId, "tv", data.movie.title)
             .then((enr) => {
               if (!active) return;
               if (enr.backdropUrl) setTmdbBackdropUrl(enr.backdropUrl);
@@ -124,7 +235,7 @@ export default function TVClient({ id }: TVClientProps) {
       });
 
     // NON-CRITICAL: recommendations
-    fetchRecs(id)
+    fetchRecs(activeId)
       .then((mapped) => {
         if (!active) return;
         setRecommendations(mapped);
@@ -334,16 +445,55 @@ export default function TVClient({ id }: TVClientProps) {
             
             <p className={styles.description}>{tmdbShowMeta?.overview || movie.description}</p>
             
+            {dubs && dubs.length > 1 && (
+              <div className={styles.dubsContainer}>
+                <span className={styles.dubsLabel}>Audio / Dubbing:</span>
+                <div className={styles.dubsList}>
+                  {dubs.map((d: any) => {
+                    const isCurrent = 
+                      String(d.subject_id) === String(activeId) || 
+                      String(d.detail_path) === String(activeId) ||
+                      String(d.subject_id) === String(movie?.subjectId) ||
+                      String(d.detail_path) === String(movie?.detailPath);
+                    return (
+                      <button
+                        key={d.subject_id}
+                        onClick={() => {
+                          window.history.pushState(null, "", `/tv/${d.subject_id}`);
+                          setActiveId(d.subject_id);
+                        }}
+                        className={`${styles.dubBadge} ${isCurrent ? styles.dubActive : ""}`}
+                      >
+                        {d.language_name}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+            
             <div className={styles.actionButtons}>
-              <Link
-                href={`/watch/${id}?season=${selectedSeason}&episode=1`}
-                className={styles.playButton}
-                onMouseEnter={() => prefetchDownload(id, selectedSeason, 1)}
-                onTouchStart={() => prefetchDownload(id, selectedSeason, 1)}
-              >
-                <Play fill="black" size={24} />
-                <span>Play Season {selectedSeason}</span>
-              </Link>
+              {continueRecord ? (
+                <Link
+                  href={`/watch/${activeId}?season=${continueRecord.season}&episode=${continueRecord.episode}`}
+                  className={styles.playButton}
+                  onMouseEnter={() => prefetchDownload(activeId, continueRecord.season, continueRecord.episode)}
+                  onTouchStart={() => prefetchDownload(activeId, continueRecord.season, continueRecord.episode)}
+                >
+                  <Play fill="black" size={24} />
+                  <span>Resume S{continueRecord.season} • E{continueRecord.episode}</span>
+                </Link>
+              ) : (
+                <Link
+                  href={`/watch/${activeId}?season=${selectedSeason}&episode=1`}
+                  className={styles.playButton}
+                  onMouseEnter={() => prefetchDownload(activeId, selectedSeason, 1)}
+                  onTouchStart={() => prefetchDownload(activeId, selectedSeason, 1)}
+                >
+                  <Play fill="black" size={24} />
+                  <span>Play Season {selectedSeason}</span>
+                </Link>
+              )}
               <button
                 className={styles.iconButton}
                 onClick={handleToggleList}
@@ -413,10 +563,10 @@ export default function TVClient({ id }: TVClientProps) {
                       return (
                         <Link
                           key={ep.episode_number}
-                          href={`/watch/${id}?season=${selectedSeason}&episode=${ep.episode_number}`}
+                          href={`/watch/${activeId}?season=${selectedSeason}&episode=${ep.episode_number}`}
                           className={styles.episodeCard}
-                          onMouseEnter={() => prefetchDownload(id, selectedSeason, ep.episode_number)}
-                          onTouchStart={() => prefetchDownload(id, selectedSeason, ep.episode_number)}
+                          onMouseEnter={() => prefetchDownload(activeId, selectedSeason, ep.episode_number)}
+                          onTouchStart={() => prefetchDownload(activeId, selectedSeason, ep.episode_number)}
                         >
                           <div className={styles.episodeStillContainer}>
                             {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -430,6 +580,17 @@ export default function TVClient({ id }: TVClientProps) {
                               <Play fill="white" size={24} color="white" />
                             </div>
                             <span className={styles.episodeNum}>{ep.episode_number}</span>
+                            {(() => {
+                              const progressInfo = episodesProgress[`${selectedSeason}:${ep.episode_number}`];
+                              if (progressInfo && progressInfo.progress && progressInfo.duration) {
+                                return (
+                                  <div style={{ position: "absolute", bottom: 0, left: 0, right: 0, height: "4px", backgroundColor: "rgba(255,255,255,0.2)", zIndex: 10 }}>
+                                    <div style={{ width: `${(progressInfo.progress / progressInfo.duration) * 100}%`, height: "100%", backgroundColor: "var(--accent-color)" }} />
+                                  </div>
+                                );
+                              }
+                              return null;
+                            })()}
                           </div>
                           <div className={styles.episodeDetails}>
                             <div className={styles.episodeMetaRow}>

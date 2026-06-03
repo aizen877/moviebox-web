@@ -1,11 +1,20 @@
 "use client";
 
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useMemo } from "react";
 import Link from "next/link";
 import styles from "./CustomVideoPlayer.module.css";
 import { Loader2 } from "lucide-react";
 
 interface CustomVideoPlayerProps {
+  id: string;
+  mediaType?: "movie" | "tv";
+  season?: number;
+  episode?: number;
+  posterPath?: string;
+  episodes?: any[];
+  currentSeason?: number;
+  currentEpisode?: number;
+  onEpisodeChange?: (season: number, episode: number) => void;
   files: any[];
   selectedFile: any;
   onQualityChange: (file: any) => void;
@@ -19,9 +28,19 @@ interface CustomVideoPlayerProps {
   backHref?: string;
   /** Fires once the video has buffered enough to start playing (canplay). */
   onReady?: () => void;
+  dubs?: any[];
 }
 
 export default function CustomVideoPlayer({
+  id,
+  mediaType = "movie",
+  season,
+  episode,
+  posterPath,
+  episodes,
+  currentSeason,
+  currentEpisode,
+  onEpisodeChange,
   files,
   selectedFile,
   onQualityChange,
@@ -32,6 +51,7 @@ export default function CustomVideoPlayer({
   fillParent = false,
   backHref,
   onReady,
+  dubs,
 }: CustomVideoPlayerProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -40,6 +60,7 @@ export default function CustomVideoPlayer({
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
   const [volume, setVolume] = useState(1);
+  const [showEpisodesDrawer, setShowEpisodesDrawer] = useState(false);
   const [isMuted, setIsMuted] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
@@ -105,6 +126,204 @@ export default function CustomVideoPlayer({
     };
   }, [isLoading, videoUrl]);
 
+  // Compute associated IDs (current active ID + sibling dub IDs)
+  const allIds = useMemo(() => {
+    const ids = new Set<string>();
+    if (id) ids.add(String(id));
+    if (dubs) {
+      dubs.forEach((d: any) => {
+        if (d.subject_id) ids.add(String(d.subject_id));
+        if (d.detail_path) ids.add(String(d.detail_path));
+      });
+    }
+    return ids;
+  }, [id, dubs]);
+
+  // Load and hold playback progress for all episodes of this show
+  const [episodesProgress, setEpisodesProgress] = useState<Record<string, { progress: number; duration: number }>>({});
+
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem("mbx:episodes_progress");
+      if (saved) {
+        const history = JSON.parse(saved);
+        const map: Record<string, { progress: number; duration: number }> = {};
+        
+        const getBaseTitle = (t: string) => {
+          if (!t) return "";
+          return t.replace(/\[[^\]]+\]/g, "").replace(/\([^\)]+\)/g, "").trim().toLowerCase();
+        };
+        const currentBase = getBaseTitle(title);
+
+        history.forEach((item: any) => {
+          const isMatch = 
+            allIds.has(String(item.id)) || 
+            (currentBase && item.title && getBaseTitle(item.title) === currentBase);
+
+          if (isMatch) {
+            const key = `${item.season}:${item.episode}`;
+            map[key] = { progress: item.progress, duration: item.duration };
+          }
+        });
+        setEpisodesProgress(map);
+      }
+    } catch (e) {
+      console.error("Failed to load episodes progress", e);
+    }
+  }, [allIds, title]);
+
+  // 1. Restore playback progress from localStorage on mount/id change
+  useEffect(() => {
+    try {
+      const getBaseTitle = (t: string) => {
+        if (!t) return "";
+        return t.replace(/\[[^\]]+\]/g, "").replace(/\([^\)]+\)/g, "").trim().toLowerCase();
+      };
+      const currentBase = getBaseTitle(title);
+
+      // First check episodes progress history for this specific episode
+      const savedEps = localStorage.getItem("mbx:episodes_progress");
+      if (savedEps) {
+        const epHistory = JSON.parse(savedEps);
+        const epItem = epHistory.find(
+          (item: any) => {
+            const isMatch = allIds.has(String(item.id)) || (currentBase && item.title && getBaseTitle(item.title) === currentBase);
+            return isMatch && item.season === season && item.episode === episode;
+          }
+        );
+        if (
+          epItem &&
+          epItem.progress > 10 &&
+          epItem.progress < epItem.duration * 0.95
+        ) {
+          previousTimeRef.current = epItem.progress;
+          return;
+        }
+      }
+
+      // Fallback: Check continue watching history
+      const saved = localStorage.getItem("mbx:continue_watching");
+      if (saved) {
+        const history = JSON.parse(saved);
+        const progressItem = history.find(
+          (item: any) => {
+            const isMatch = allIds.has(String(item.id)) || (currentBase && item.title && getBaseTitle(item.title) === currentBase);
+            return isMatch && (!season || item.season === season) && (!episode || item.episode === episode);
+          }
+        );
+        if (
+          progressItem &&
+          progressItem.progress > 10 &&
+          progressItem.progress < progressItem.duration * 0.95
+        ) {
+          previousTimeRef.current = progressItem.progress;
+        }
+      }
+    } catch (e) {
+      console.error("Failed to restore progress", e);
+    }
+  }, [allIds, season, episode, title]);
+
+  // 2. Throttle saving playback progress to localStorage every 5 seconds
+  useEffect(() => {
+    if (!id) return;
+
+    const interval = setInterval(() => {
+      if (!videoRef.current) return;
+      const current = videoRef.current.currentTime;
+      const dur = videoRef.current.duration;
+      
+      if (dur <= 0 || current < 3) return;
+
+      try {
+        const getBaseTitle = (t: string) => {
+          if (!t) return "";
+          return t.replace(/\[[^\]]+\]/g, "").replace(/\([^\)]+\)/g, "").trim().toLowerCase();
+        };
+        const currentBase = getBaseTitle(title);
+
+        // Save to general Continue Watching history
+        const saved = localStorage.getItem("mbx:continue_watching");
+        const history = saved ? JSON.parse(saved) : [];
+        const filtered = history.filter((item: any) => {
+          const isMatch = allIds.has(String(item.id)) || (currentBase && item.title && getBaseTitle(item.title) === currentBase && item.mediaType === mediaType);
+          return !isMatch;
+        });
+
+        // Only save progress if less than 95% watched
+        if (current / dur < 0.95) {
+          filtered.unshift({
+            id,
+            title,
+            episodeTitle,
+            mediaType,
+            season,
+            episode,
+            progress: current,
+            duration: dur,
+            posterPath,
+            updatedAt: Date.now(),
+          });
+          if (filtered.length > 12) {
+            filtered.pop();
+          }
+        }
+        localStorage.setItem("mbx:continue_watching", JSON.stringify(filtered));
+
+        // Save to individual Episodes Progress history
+        const savedEps = localStorage.getItem("mbx:episodes_progress");
+        const epHistory = savedEps ? JSON.parse(savedEps) : [];
+        const filteredEps = epHistory.filter(
+          (item: any) => {
+            const isMatch = allIds.has(String(item.id)) || (currentBase && item.title && getBaseTitle(item.title) === currentBase);
+            return !(isMatch && item.season === season && item.episode === episode);
+          }
+        );
+
+        if (current / dur < 0.95) {
+          filteredEps.unshift({
+            id,
+            title,
+            season,
+            episode,
+            progress: current,
+            duration: dur,
+            updatedAt: Date.now(),
+          });
+          if (filteredEps.length > 100) {
+            filteredEps.pop();
+          }
+          // Update local state to immediately show updated progress bar in the episode drawer
+          setEpisodesProgress((prev) => ({
+            ...prev,
+            [`${season}:${episode}`]: { progress: current, duration: dur }
+          }));
+        } else {
+          // If finished, remove from local progress map
+          setEpisodesProgress((prev) => {
+            const next = { ...prev };
+            delete next[`${season}:${episode}`];
+            return next;
+          });
+        }
+        localStorage.setItem("mbx:episodes_progress", JSON.stringify(filteredEps));
+      } catch (e) {
+        console.error("Failed to save progress", e);
+      }
+    }, 5000);
+
+    return () => clearInterval(interval);
+  }, [
+    id,
+    allIds,
+    title,
+    episodeTitle,
+    mediaType,
+    season,
+    episode,
+    posterPath,
+  ]);
+
   // Track changes to selectedFile and files to save current playback progress and play state *before* switching sources
   useEffect(() => {
     if (selectedFile?.stream_link) {
@@ -121,8 +340,7 @@ export default function CustomVideoPlayer({
           wasPlayingRef.current = true;
         }
       } else {
-        // Initial load
-        previousTimeRef.current = 0;
+        // Initial load: Preserve previousTimeRef.current (from localStorage)
         activeTimeRef.current = 0;
         setCurrentTime(0);
         wasPlayingRef.current = true;
@@ -609,6 +827,28 @@ export default function CustomVideoPlayer({
             </div>
 
             <div className={styles.rightControls}>
+              {/* Episodes List Drawer Toggle */}
+              {mediaType === "tv" && episodes && episodes.length > 0 && (
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setShowEpisodesDrawer(!showEpisodesDrawer);
+                    setShowSettings(false); // Close settings if open
+                  }}
+                  className={`${styles.iconButton} ${showEpisodesDrawer ? styles.activeIcon : ""}`}
+                  title="Episodes List"
+                >
+                  <svg viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round">
+                    <line x1="8" y1="6" x2="21" y2="6" />
+                    <line x1="8" y1="12" x2="21" y2="12" />
+                    <line x1="8" y1="18" x2="21" y2="18" />
+                    <line x1="3" y1="6" x2="3.01" y2="6" strokeWidth="2.5" />
+                    <line x1="3" y1="12" x2="3.01" y2="12" strokeWidth="2.5" />
+                    <line x1="3" y1="18" x2="3.01" y2="18" strokeWidth="2.5" />
+                  </svg>
+                </button>
+              )}
+
               {/* Quality & Speed Settings */}
               <div className={styles.settingsWrapper}>
                 <button
@@ -740,6 +980,67 @@ export default function CustomVideoPlayer({
           </div>
         </div>
       </div>
+
+      {/* Episodes Drawer Overlay (sliding sidebar) */}
+      {showEpisodesDrawer && mediaType === "tv" && episodes && episodes.length > 0 && (
+        <div className={styles.episodesDrawer} onClick={(e) => e.stopPropagation()}>
+          <div className={styles.drawerHeader}>
+            <h3>Episodes List</h3>
+            <button 
+              onClick={() => setShowEpisodesDrawer(false)} 
+              className={styles.drawerCloseBtn}
+            >
+              ×
+            </button>
+          </div>
+          <div className={styles.drawerList}>
+            {episodes.map((ep: any) => {
+              const isActive = ep.episode_number === currentEpisode;
+              const progressKey = `${currentSeason}:${ep.episode_number}`;
+              const progressInfo = episodesProgress[progressKey];
+              return (
+                <button
+                  key={ep.episode_number}
+                  onClick={() => {
+                    if (onEpisodeChange && currentSeason) {
+                      onEpisodeChange(currentSeason, ep.episode_number);
+                      setShowEpisodesDrawer(false);
+                    }
+                  }}
+                  className={`${styles.drawerItem} ${isActive ? styles.drawerItemActive : ""}`}
+                >
+                  <div style={{ display: "flex", gap: "12px", marginBottom: "8px", alignItems: "flex-start" }}>
+                    <div style={{ position: "relative", width: "120px", flexShrink: 0, borderRadius: "6px", overflow: "hidden", aspectRatio: "16/9", backgroundColor: "rgba(255,255,255,0.1)" }}>
+                      {/* eslint-disable-next-line @next/next/no-img-element */}
+                      <img 
+                        src={ep.still_path ? (ep.still_path.startsWith("http") ? ep.still_path : `https://image.tmdb.org/t/p/w300${ep.still_path}`) : (posterPath ? (posterPath.startsWith("http") ? posterPath : `https://image.tmdb.org/t/p/w500${posterPath}`) : "/placeholder.png")} 
+                        alt={ep.name}
+                        style={{ width: "100%", height: "100%", objectFit: "cover" }}
+                        loading="lazy"
+                      />
+                      <div style={{ position: "absolute", bottom: "4px", right: "4px", backgroundColor: "rgba(0,0,0,0.75)", color: "white", fontSize: "0.7rem", padding: "2px 4px", borderRadius: "4px" }}>
+                        Ep {ep.episode_number}
+                      </div>
+                      {progressInfo && progressInfo.progress && progressInfo.duration ? (
+                        <div style={{ position: "absolute", bottom: 0, left: 0, right: 0, height: "3px", backgroundColor: "rgba(255,255,255,0.2)", zIndex: 10 }}>
+                          <div style={{ width: `${(progressInfo.progress / progressInfo.duration) * 100}%`, height: "100%", backgroundColor: "var(--accent-color)" }} />
+                        </div>
+                      ) : null}
+                    </div>
+                    <div style={{ display: "flex", flexDirection: "column", flex: 1, textAlign: "left", gap: "4px" }}>
+                      <span className={styles.drawerItemTitle} style={{ margin: 0, fontSize: "0.95rem" }}>{ep.name}</span>
+                      {ep.runtime && <span style={{ fontSize: "0.75rem", color: "var(--text-secondary)" }}>{ep.runtime}m</span>}
+                    </div>
+                  </div>
+                  {ep.overview && (
+                    <p className={styles.drawerItemOverview} style={{ WebkitLineClamp: 2, display: "-webkit-box", WebkitBoxOrient: "vertical", overflow: "hidden", margin: 0 }}>{ep.overview}</p>
+                  )}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      )}
     </div>
   );
 }

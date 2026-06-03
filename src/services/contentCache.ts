@@ -10,12 +10,15 @@
  *    (no skeleton on the destination page).
  */
 
-const BASE_URL = "https://movie-api.opsihab.tech";
+const BASE_URL = process.env.NODE_ENV === "development"
+  ? "http://127.0.0.1:7860"
+  : "https://movie-api.opsihab.tech";
 
 export interface CoreDetails {
   movie: any;
   cast: any[];
   seasons: any;
+  dubs?: any[];
 }
 
 export interface TmdbEnrichment {
@@ -90,6 +93,7 @@ export function fetchCore(id: string): Promise<CoreDetails> {
         movie: json?.data?.subject || null,
         cast: json?.data?.stars || [],
         seasons: json?.seasons || null,
+        dubs: json?.dubs || [],
       };
       coreCache[id] = data;
       persistCore(id, data);
